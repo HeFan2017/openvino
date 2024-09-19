@@ -68,6 +68,11 @@ public:
 
 void mergeParallelMatMuls(const std::shared_ptr<ov::Model>& m, Context& ctx);
 
+class DQMatMulGQiP : public ov::pass::MatcherPass {
+public:
+    explicit DQMatMulGQiP(Context::Ref ctx);
+};
+
 }  // namespace opt
 }  // namespace patterns
 }  // namespace npuw
