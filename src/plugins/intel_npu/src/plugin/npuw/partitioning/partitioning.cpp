@@ -349,21 +349,23 @@ void Partitioner::identifySubgraphs() {
 
         // Input layers may be connected to the same producer nodes, weights,
         // or parameters. Cache those to avoid duplicating the parameters.
-        std::unordered_map<NodeSPtr, NodeSPtr> input_mapping;
+        std::map<NodeSPtr, NodeSPtr> input_mapping;
+        std::vector<std::pair<NodeSPtr, NodeSPtr>> input_mapping_vec;
 
         // In several cases a model can be slightly altered after the partitioning
         // plan was done. E.g., new slices or converts may be added on inputs/
         // outputs. Add a special handling for this case.
         std::unordered_set<NodeSPtr> extra_params;
-        auto parameter_as_is = [&input_mapping](NodeSPtr orig_node) {
+        auto parameter_as_is = [&input_mapping, &input_mapping_vec](NodeSPtr orig_node) {
             auto it = input_mapping.find(orig_node);
             if (it != input_mapping.end()) {
                 return it->second;
             }
             input_mapping[orig_node] = orig_node;
+            input_mapping_vec.push_back(std::make_pair(orig_node, orig_node));
             return orig_node;
         };
-        auto parameter_from = [&input_mapping](ov::Output<ov::Node> output) {
+        auto parameter_from = [&input_mapping, &input_mapping_vec](ov::Output<ov::Node> output) {
             auto orig_node = output.get_node_shared_ptr();
             auto it = input_mapping.find(orig_node);
             if (it != input_mapping.end()) {
@@ -389,8 +391,10 @@ void Partitioner::identifySubgraphs() {
                 result = std::static_pointer_cast<ov::Node>(new_param);
             }
             input_mapping[orig_node] = result;
+            input_mapping_vec.push_back(std::make_pair(orig_node, result));
             return result;
         };
+        sort(group.input_layers.begin(), group.input_layers.end());
         for (auto&& input_layer_name : group.input_layers) {
             LOG_VERB("Processing group's input layer " << input_layer_name);
             auto input_layer_ptr = node_id_cache.at(input_layer_name);
@@ -428,6 +432,7 @@ void Partitioner::identifySubgraphs() {
                     // model extended with slices to maintain zero-copy (LLM case)
                     auto extra_param = input_node->input(0).get_source_output().get_node_shared_ptr();
                     input_mapping[input_node] = extra_param;
+                    input_mapping_vec.push_back(std::pair(input_node, extra_param));
                     extra_params.insert(extra_param);
                 } else {
                     // Ok, this input is connected to some other node's output
@@ -464,7 +469,7 @@ void Partitioner::identifySubgraphs() {
         // input mapping. This is a w/a, better they're added only once (TODO).
         // This set handles it.
         std::set<std::shared_ptr<ov::Node>> unique_params;
-        for (auto&& im : input_mapping) {
+        for (auto&& im : input_mapping_vec) {
             LOG_BLOCK();
             auto& src_node = im.first;
             auto& maybe_param = im.second;
@@ -531,6 +536,7 @@ void Partitioner::identifySubgraphs() {
             // clang-format on
         }
         std::size_t num_optimized_out_layers = 0u;
+        sort(group.output_layers.begin(), group.output_layers.end());
         for (auto&& output_layer_name : group.output_layers) {
             LOG_VERB("Processing group's output layer " << output_layer_name);
             LOG_BLOCK();
