@@ -534,7 +534,8 @@ DQParMMGQ::DQParMMGQ(Context::Ref ctx) {
 
         auto qmmi_shape = node_to_output.at(qmm).get_shape();
 
-        if (qmmi_shape.size() != 3 || qmmi_shape[0] != 1 || qmmi_shape[1] != 1) {
+        //if (qmmi_shape.size() != 3 || qmmi_shape[0] != 1 || qmmi_shape[1] != 1) {
+        if (qmmi_shape.size() != 3 || qmmi_shape[0] != 1) {
             // Limit token to 1-token shapes only (prefill requires its own tranformation)
             return false;
         }
@@ -551,6 +552,9 @@ DQParMMGQ::DQParMMGQ(Context::Ref ctx) {
 
 void mergeParallelMatMuls(const std::shared_ptr<ov::Model>& m, Context& ctx) {
     ov::pass::GraphRewrite rewr;
+
+    //ov::save_model(m, "before_pmm.xml");
+
     rewr.add_matcher<ov::npuw::patterns::opt::DQParMMGQ>(std::ref(ctx));
     rewr.run_on_model(m);
 
@@ -562,6 +566,8 @@ void mergeParallelMatMuls(const std::shared_ptr<ov::Model>& m, Context& ctx) {
         ov::Output<ov::Node> orig_multiply;
         std::size_t axis_to_concat = -1;
         std::tie(orig_multiply, axis_to_concat) = mul_to_mms.first;
+
+        auto origin_input_shape = orig_multiply.get_shape();
 
         if (!util::is_set(axis_to_concat, ctx.pmm_dims)) {
             LOG_VERB("Parallel MatMuls found, but fusion over dim " << axis_to_concat << " is not enabled");
@@ -627,7 +633,7 @@ void mergeParallelMatMuls(const std::shared_ptr<ov::Model>& m, Context& ctx) {
             auto this_slice_end =
                 std::make_shared<ov::op::v0::Constant>(ov::element::i32,
                                                        ov::Shape{3},
-                                                       S{1, 1, offset + this_orig_wshape[axis_to_concat]});
+                                                       S{1, origin_input_shape[1], offset + this_orig_wshape[axis_to_concat]});
             auto this_slice_step = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{3}, S{1, 1, 1});
             auto this_slice =
                 std::make_shared<ov::op::v8::Slice>(new_mm, this_slice_start, this_slice_end, this_slice_step);
