@@ -373,7 +373,9 @@ void Snapshot::earlyAvoids() {
 
     if (handle_patterns) {
         // Check the model for all specified patterns
+        //ov::save_model(m_model, "test.xml");
         rewr.run_on_model(m_model);
+
     }
 
     LOG_INFO("DONE.");
@@ -410,6 +412,9 @@ void Snapshot::earlyRegroup() {
             } else if (isolate.pattern == "DQMatMulGQ") {
                 rewr.add_matcher<ov::npuw::patterns::compute::DQMatMulGQ>(shared_from_this(), isolate.tag);
                 handle_patterns = true;
+            } else if (isolate.pattern == "LLMHead") {
+                rewr.add_matcher<ov::npuw::patterns::compute::LLMHead>(shared_from_this(), isolate.tag);
+                handle_patterns = true;
             } else {
                 LOG_WARN("OPENVINO_NPUW_ISOLATE only supports RMSNorm, DQMatMulCW, DQMatMulGQ "
                          << "as patterns. Isolate pattern " << isolate.pattern << " is skipped!");
@@ -436,10 +441,12 @@ void Snapshot::repeatedBlocks() {
             mergeUniques();
         });
         mergeTriangles();
+        //print_repeating();
         markInternalCompute();
         resetExcludedRep();
     });
     cleanUpUniques();
+    //print_repeating();
 
     LOG_INFO("Number of groups after compiler pass: " << graphSize());
 
@@ -458,14 +465,26 @@ void Snapshot::identifyUniques() {
         // thus check and use only the single initial layer
         auto ov_node = group->getInitialNode();
         auto metadesc = ov::npuw::online::util::getMetaDesc(ov_node);
+        group->SetMeta(metadesc);
         const auto& avoids = group->avoidedTargets();
+
+        if (avoids.size() > 0)
+        {
+            printf("avoids is larger than 0 \n");
+        }
         const auto& special_tags = group->specialTags();
         uniques[{metadesc, avoids, special_tags}].insert(group);
     }
 
     for (const auto& elem : uniques) {
+        printf("%s, tag %s, count %lld\n", std::get<0>(elem.first).c_str(), std::get<2>(elem.first).c_str(), elem.second.size());
+    }
+
+    for (const auto& elem : uniques) {
         if (elem.second.size() > 1) {
             std::shared_ptr<Repeated> rep = std::make_shared<Repeated>();
+
+            rep->metaForDebug = std::get<0>(elem.first);
 
             for (const auto& gptr : elem.second) {
                 gptr->setRepeated(rep);
@@ -706,12 +725,19 @@ void Snapshot::mergeUniques() {
 
     std::unordered_set<std::shared_ptr<Repeated>> merged_this_time;
 
+    //print_repeating();
+
     for (const auto& nh : m_graph->sorted()) {
         if (!m_graph->contains(nh)) {
             continue;
         }
         Group::GPtr group = m_graph->meta(nh).get<Group::GPtr>();
         auto rep = group->repeated();
+
+        if (group->specialTags().size() > 0)
+        {
+            printf("HFDebug: group tags is %s\n", group->specialTags().c_str());
+        }
 
         GPtrSet repeating_groups;
 
@@ -726,6 +752,8 @@ void Snapshot::mergeUniques() {
             }
         }
     }
+
+    //print_repeating();
 
     LOG_INFO("Number of groups after compiler pass: " << graphSize());
     LOG_INFO("DONE");
@@ -760,9 +788,14 @@ std::shared_ptr<Repeated> Snapshot::tryGrowRepeatingGroups(const GPtrSet& repeat
     for (const auto& group : repeating_groups_sorted) {
         auto producers = group->srcNodes();
         for (const auto& prod_nh : producers) {
+            if (this_special == "noabove")
+            {
+                continue;
+            }
             Group::GPtr prod_group = m_graph->meta(prod_nh).get<Group::GPtr>();
             if (prod_group->repeated() && !prod_group->hasCycle(group) && prod_group->repeated() != this_rep_tag &&
-                prod_group->avoidedTargets() == this_avoided && prod_group->specialTags() == this_special) {
+                (prod_group->avoidedTargets() == this_avoided || this_avoided.size() == 0) &&
+                (prod_group->specialTags() == "noabove" || prod_group->specialTags() == this_special)) {
                 auto meta_interconnect = group->metaInterconnect(prod_group);
 
                 // FIXME: find a better way to reduce time complexity
@@ -857,6 +890,10 @@ std::shared_ptr<Repeated> Snapshot::tryMergeRepeating(const std::vector<Group::G
     }
 
     std::shared_ptr<Repeated> new_rep = std::make_shared<Repeated>();
+    auto prodrepeated = prods.at(0)->repeated();
+    auto consrepeated = conss.at(0)->repeated();
+
+    new_rep->metaForDebug = prodrepeated->metaForDebug + " ++ " + consrepeated->metaForDebug; 
 
     for (size_t i = 0; i < conss.size(); ++i) {
         conss.at(i)->fuse(prods.at(i));
@@ -877,6 +914,15 @@ std::shared_ptr<Repeated> Snapshot::tryMergeRepeating(const std::vector<Group::G
     return new_rep;
 }
 
+void Snapshot::print_repeating() {
+    auto allrepeats = repeating();
+    printf("\n\n\n");
+    for (auto& reptag_to_gset : allrepeats) {
+        auto repeat = reptag_to_gset.first;
+        printf("%s, count %lld\n", repeat->metaForDebug.c_str(), reptag_to_gset.second.size());
+    }
+}
+
 std::unordered_map<std::shared_ptr<Repeated>, GPtrSet> Snapshot::repeating() const {
     std::unordered_map<std::shared_ptr<Repeated>, GPtrSet> repeating;
     for (const auto& nh : m_graph->sorted()) {
@@ -894,7 +940,9 @@ void Snapshot::cleanUpUniques() {
     LOG_INFO("Online partitioning: executing cleanUpUniques pass...");
     LOG_BLOCK();
 
-    for (auto& reptag_to_gset : repeating()) {
+    auto allrepeats = repeating();
+
+    for (auto& reptag_to_gset : allrepeats) {
         bool keep = cleanUpUniquesImpl(reptag_to_gset.second);
 
         if (!keep) {

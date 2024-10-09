@@ -27,6 +27,8 @@ struct Repeated {
     bool openForMerge() const;
 
     bool m_excluded = false;
+
+    std::string metaForDebug;
 };
 
 struct Interconnect {

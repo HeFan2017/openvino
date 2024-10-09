@@ -292,6 +292,7 @@ void Group::takeFlags(const Group::GPtr& gptr_other) {
     m_nofold = gptr_other->isNoFold();
     // Update isolate tag
     m_isol_tag = gptr_other->isolatedTag();
+    m_not_fused_above = gptr_other->IsNotFusedAbove();
 }
 
 // Check if there is indirect path from this to gptr_cons
@@ -414,6 +415,10 @@ std::string Group::specialTags() const {
 
     if (m_nofold) {
         tags += "nofold";
+    }
+
+    if (m_not_fused_above) {
+        tags += "noabove";
     }
 
     if (!m_isol_tag.empty()) {

@@ -81,6 +81,19 @@ public:
     const std::string& isolatedTag() const;
     std::string specialTags() const;
 
+    void SetMeta(std::string s) {
+        meta = s;
+    }
+
+
+    void NotFusedAbove() {
+        m_not_fused_above = true;
+    }
+
+    bool IsNotFusedAbove() {
+        return m_not_fused_above;
+    }
+
 private:
     void includeExtraLayers(detail::OVNodeSet& input_layers,
                             detail::OVNodeSet& output_layers,
@@ -108,6 +121,9 @@ private:
     std::shared_ptr<Repeated> m_repeated = nullptr;
     // For each layer inside group, store it's history of repeated groups
     detail::ReptrackMap m_reptrack;
+
+    std::string meta;
+    bool m_not_fused_above = false;
 };
 
 }  // namespace online

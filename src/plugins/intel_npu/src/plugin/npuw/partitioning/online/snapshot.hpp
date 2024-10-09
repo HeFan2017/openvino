@@ -78,6 +78,8 @@ private:
     std::shared_ptr<Repeated> tryMergeRepeating(const std::vector<std::shared_ptr<Group>>& prods,
                                                 const std::vector<std::shared_ptr<Group>>& conss);
     std::unordered_map<std::shared_ptr<Repeated>, detail::GPtrSet> repeating() const;
+
+    void print_repeating();
     void completeRepeating(const std::shared_ptr<Repeated>& reptag, const detail::GPtrSet& gset);
 
     std::shared_ptr<ov::Model> m_model;
