@@ -57,12 +57,12 @@ RMSNorm::RMSNorm(const std::shared_ptr<ov::npuw::online::Snapshot>& snapshot, co
         auto matched_add = node_to_output.at(add).get_node_shared_ptr();
         auto matched_sqrt = node_to_output.at(sqrt).get_node_shared_ptr();
 
-        //node_to_gptr->at(matched_power)->avoid(avoid_device);
-        //node_to_gptr->at(matched_reduce)->avoid(avoid_device);
-        //node_to_gptr->at(matched_add)->avoid(avoid_device);
-        //node_to_gptr->at(matched_sqrt)->avoid(avoid_device);
+        node_to_gptr->at(matched_power)->avoid(avoid_device);
+        node_to_gptr->at(matched_reduce)->avoid(avoid_device);
+        node_to_gptr->at(matched_add)->avoid(avoid_device);
+        node_to_gptr->at(matched_sqrt)->avoid(avoid_device);
         static int count = 0;
-        node_to_gptr->at(matched_power)->NotFusedAbove();
+        //node_to_gptr->at(matched_power)->NotFusedAbove();
         count++;
         printf("Found %d power\n", count);
 

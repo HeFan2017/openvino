@@ -405,6 +405,7 @@ void Snapshot::earlyRegroup() {
             // FIXME: refactor as more patterns are supported
             if (isolate.pattern == "RMSNorm") {
                 rewr.add_matcher<ov::npuw::patterns::compute::RMSNorm>(shared_from_this(), isolate.tag);
+                rewr.add_matcher<ov::npuw::patterns::compute::LLMHead>(shared_from_this(), isolate.tag);
                 handle_patterns = true;
             } else if (isolate.pattern == "DQMatMulCW") {
                 rewr.add_matcher<ov::npuw::patterns::compute::DQMatMulCW>(shared_from_this(), isolate.tag);
