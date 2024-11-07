@@ -683,17 +683,19 @@ DQMatMulGQ2iP::DQMatMulGQ2iP(Context::Ref ctx) {
 // Param(S) ------------>
 
 DQParMMGQ::DQParMMGQ(Context::Ref ctx) {
+    printf("HFDebug: in DQParMMGQ\n");
     auto qweight = opp::wrap_type<ov::op::v0::Parameter>();
     auto qcoeff = opp::wrap_type<ov::op::v0::Parameter>();
     auto qcvtw = opp::wrap_type<ov::op::v0::Convert>({qweight});
     auto qmuls = opp::wrap_type<ov::op::v1::Multiply>({qcvtw, qcoeff});
     auto qreshp = opp::wrap_type<ov::op::v1::Reshape>({qmuls, opp::any_input()});
     auto qmmi = opp::wrap_type<ov::op::v1::Multiply>({opp::any_input(), opp::any_input()});
-    auto qcvtr = opp::optional<ov::op::v0::Convert>({qreshp->output(0)});
-    auto qmm = opp::wrap_type<ov::op::v0::MatMul>({qmmi, qcvtr});
+    //auto qcvtr = opp::optional<ov::op::v0::Convert>({qreshp->output(0)});
+    auto qmm = opp::wrap_type<ov::op::v0::MatMul>({qmmi, qreshp});
 
     // Note: Use [=] to make sure the above objects stay alive in the callback
     auto callback = [=](ov::pass::pattern::Matcher& m) {
+        printf("HFDebug: find pmm\n");
         auto& node_to_output = m.get_pattern_value_map();
         auto w_param =
             std::static_pointer_cast<ov::op::v0::Parameter>(node_to_output.at(qweight).get_node_shared_ptr());
@@ -710,6 +712,7 @@ DQParMMGQ::DQParMMGQ(Context::Ref ctx) {
         if (!matmul->get_transpose_a() && !matmul->get_transpose_b()) {
             ctx.get().register_parallel_matmul(node_to_output.at(qmmi), 2, Context::DQParMM{w_param, s_param, matmul});
         } else if (!matmul->get_transpose_a() && matmul->get_transpose_b()) {
+            printf("HFDebug: register_pmm, below\n");
             ctx.get().register_parallel_matmul(node_to_output.at(qmmi), 0, Context::DQParMM{w_param, s_param, matmul});
         }
         return false;  // no change here
@@ -730,10 +733,14 @@ void mergeParallelMatMuls(const std::shared_ptr<ov::Model>& m, Context& ctx) {
 
         const ov::Shape orig_act_shape = orig_multiply.get_shape();
 
+        printf("HFDebug: try to merge\n");
+
         if (!util::is_set(axis_to_concat, ctx.pmm_dims)) {
             LOG_VERB("Parallel MatMuls found, but fusion over dim " << axis_to_concat << " is not enabled");
             continue;
         }
+
+        printf("HFDebug: merging enabled\n");
 
         const auto& first_w = parallel_matmuls[0].w;
         const auto& first_s = parallel_matmuls[0].s;
@@ -753,6 +760,7 @@ void mergeParallelMatMuls(const std::shared_ptr<ov::Model>& m, Context& ctx) {
                     break;
                 }
             }
+            printf("HFDebug: can merge.\n");
             old_w.push_back(dqmm.w);
             old_s.push_back(dqmm.s);
         }
@@ -783,6 +791,8 @@ void mergeParallelMatMuls(const std::shared_ptr<ov::Model>& m, Context& ctx) {
 
         // Transpose input_b if concat was done by 0th axis (meaning the original MM's input_b were also transposed)
         auto new_mm = std::make_shared<ov::op::v0::MatMul>(orig_multiply, new_rshp, false, (axis_to_concat == 0));
+
+        printf("HFDebug: merging %lld matmuls.\n", parallel_matmuls.size());
 
         // Create new slices & reconnect matmuls
         // FIXME: use zip
