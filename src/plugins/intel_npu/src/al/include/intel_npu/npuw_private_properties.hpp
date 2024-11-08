@@ -185,6 +185,14 @@ static constexpr ov::Property<bool> dyn_quant{"NPUW_DQ"};
 
 /**
  * @brief
+ * Type: bool.
+ * Transpose the weights and scale to group x output x input.
+ * Default value: false.
+ */
+static constexpr ov::Property<bool> trans_weights{"NPUW_TRANS_WEIGHTS"};
+
+/**
+ * @brief
  * Type: string.
  * Identify and merge parallel MatMuls over dimension(s) specified.
  * When set to YES, applies transformation for all dimensions.

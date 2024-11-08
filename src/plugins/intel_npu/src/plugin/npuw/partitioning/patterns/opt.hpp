@@ -76,6 +76,11 @@ public:
     explicit DQMatMulGQ2i(Context::Ref ctx);
 };
 
+class DQMatMulTransWeights : public ov::pass::MatcherPass {
+public:
+    explicit DQMatMulTransWeights(Context::Ref ctx);
+};
+
 class DQMatMulGQiP : public ov::pass::MatcherPass {
 public:
     explicit DQMatMulGQiP(Context::Ref ctx);

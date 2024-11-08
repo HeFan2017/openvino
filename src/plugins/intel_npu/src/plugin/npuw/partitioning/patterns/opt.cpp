@@ -542,6 +542,83 @@ DQMatMulGQiP::DQMatMulGQiP(Context::Ref ctx) {
     register_matcher(std::make_shared<opp::Matcher>(qmm, "OptDQMatMulGQiP"), std::move(callback));
 }
 
+DQMatMulTransWeights::DQMatMulTransWeights(Context::Ref ctx)
+{
+    auto qweight = opp::wrap_type<ov::op::v0::Parameter>();
+    auto qcoeff = opp::wrap_type<ov::op::v0::Parameter>();
+    auto qcvtw = opp::wrap_type<ov::op::v0::Convert>({qweight});
+    auto qmuls = opp::wrap_type<ov::op::v1::Multiply>({qcvtw, qcoeff});
+    auto qreshp = opp::wrap_type<ov::op::v1::Reshape>({qmuls, opp::any_input()});
+    auto qcvtm = opp::optional<ov::op::v0::Convert>({qreshp->output(0)});
+    auto qmmi = opp::any_input();
+    auto qmm = opp::wrap_type<ov::op::v0::MatMul>({qmmi, qcvtm});
+
+    // Note: Use [=] to make sure the above objects stay alive in the callback
+    auto callback = [=](ov::pass::pattern::Matcher& m) {
+        printf("HFDebug: find transweight pattern\n");
+
+        auto& node_to_output = m.get_pattern_value_map();
+
+        auto matched_node_qweight = node_to_output.at(qweight).get_node_shared_ptr();
+        auto matched_node_qcoeff = node_to_output.at(qcoeff).get_node_shared_ptr();
+        auto matched_node_matmul = node_to_output.at(qmm).get_node_shared_ptr();
+        auto matched_out_mmi = node_to_output.at(qmmi);
+
+        auto matched_qweight = std::static_pointer_cast<ov::op::v0::Parameter>(matched_node_qweight);
+        auto matched_qcoeff = std::static_pointer_cast<ov::op::v0::Parameter>(matched_node_qcoeff);
+        auto matched_matmul = std::static_pointer_cast<ov::op::v0::MatMul>(matched_node_matmul);
+
+        auto qweight_shape = matched_qweight->output(0).get_shape();
+        auto qcoeff_shape = matched_qcoeff->output(0).get_shape();
+        auto act_shape = matched_out_mmi.get_shape();
+
+        const auto just_one = [](std::size_t a, std::size_t b) {
+            return (a == 1 && b > 1) || (a > 1 && b == 1);
+        };
+
+        if (ov::element::i4 == matched_qweight->get_element_type() && qweight_shape.size() == 3 &&
+            ov::element::f16 == matched_qcoeff->get_element_type() && qcoeff_shape.size() == 3 &&
+            act_shape.size() == 3 && 
+            qcoeff_shape[0] == qweight_shape[0] && qcoeff_shape[1] == qweight_shape[1] && qcoeff_shape[2] == 1 &&
+            !matched_matmul->get_transpose_a() && matched_matmul->get_transpose_b()) {
+            printf("HFDebug: doing transweight pattern\n");
+            // Mark W closure to transpose, and transpose the respective parameter
+            ov::Shape tw_shape = {qweight_shape[1], qweight_shape[0], qweight_shape[2]};
+            matched_qweight->set_partial_shape(tw_shape);
+            matched_qweight->validate_and_infer_types();
+            ctx.get().permute(matched_qweight, {1, 0, 2});
+
+            // Also transpose S, but in a different way (see diagram above)
+            ctx.get().permute(matched_qcoeff, {1, 0, 2});
+
+            ov::Shape ts_shape = {qcoeff_shape[1], qcoeff_shape[0], qcoeff_shape[2]};
+            matched_qcoeff->set_partial_shape(ts_shape);
+            matched_qcoeff->validate_and_infer_types();
+
+            auto newcvt = std::make_shared<ov::op::v0::Convert>(matched_qweight, ov::element::f16);
+
+            auto newmul = std::make_shared<ov::op::v1::Multiply>(newcvt, matched_qcoeff);
+
+            std::vector<std::size_t> trans_v = {1, 0, 2};
+            auto trans_c = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{3}, trans_v);
+            auto newtrans = std::make_shared<ov::op::v1::Transpose>(newmul, trans_c);
+
+            std::vector<std::size_t> rshp_v = {qweight_shape[0], qweight_shape[1] * qweight_shape[2]};
+
+            auto rshp_c = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{2}, rshp_v);
+            auto newreshape = std::make_shared<ov::op::v1::Reshape>(newtrans, rshp_c, false);
+
+            matched_matmul->inputs()[1].replace_source_output(newreshape);
+
+            return true;  // root has changed
+        }
+        return false;  // did nothing here
+    };
+
+    register_matcher(std::make_shared<opp::Matcher>(qmm, "OptDQMatMulTransWeights"), std::move(callback));
+}
+
+
 // N token case (prompt)
 //
 // FROM:
@@ -683,7 +760,6 @@ DQMatMulGQ2iP::DQMatMulGQ2iP(Context::Ref ctx) {
 // Param(S) ------------>
 
 DQParMMGQ::DQParMMGQ(Context::Ref ctx) {
-    printf("HFDebug: in DQParMMGQ\n");
     auto qweight = opp::wrap_type<ov::op::v0::Parameter>();
     auto qcoeff = opp::wrap_type<ov::op::v0::Parameter>();
     auto qcvtw = opp::wrap_type<ov::op::v0::Convert>({qweight});
@@ -695,7 +771,6 @@ DQParMMGQ::DQParMMGQ(Context::Ref ctx) {
 
     // Note: Use [=] to make sure the above objects stay alive in the callback
     auto callback = [=](ov::pass::pattern::Matcher& m) {
-        printf("HFDebug: find pmm\n");
         auto& node_to_output = m.get_pattern_value_map();
         auto w_param =
             std::static_pointer_cast<ov::op::v0::Parameter>(node_to_output.at(qweight).get_node_shared_ptr());

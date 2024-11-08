@@ -1940,27 +1940,33 @@ void Partitioner::optimize(const std::string& func_name) {
         }
     }
 
-    if (!cfg.get<::intel_npu::NPUW_DQ>()) {
-        LOG_VERB("No optimizations will be done to  " << func_name << " in model " << model->get_friendly_name()
-                                                      << "...");
-        return;
-    }
-
-    LOG_VERB("Optimize function " << func_name << " in model " << model->get_friendly_name() << "...");
-    LOG_BLOCK();
-
-    // Run "dynamic quantization"
     ov::npuw::patterns::opt::Context ctx;
     ctx.is_spatial = f._spatial.has_value();
 
-    ov::pass::GraphRewrite rewr;
-    rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulCWi>();
-    rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQi>(std::ref(ctx));
-    rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQ2i>(std::ref(ctx));
-    rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQiP>(std::ref(ctx));
-    rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQ2iP>(std::ref(ctx));
-    rewr.run_on_model(f._model);
-    ov::pass::Validate().run_on_model(f._model);
+    if (cfg.get<::intel_npu::NPUW_TRANS_WEIGHTS>())
+    {
+        ov::pass::GraphRewrite rewr;
+        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulTransWeights>(std::ref(ctx));
+
+        rewr.run_on_model(f._model);
+        ov::pass::Validate().run_on_model(f._model);
+    }
+
+    if (cfg.get<::intel_npu::NPUW_DQ>()) {
+        LOG_VERB("Optimize function " << func_name << " in model " << model->get_friendly_name() << "...");
+        LOG_BLOCK();
+
+        // Run "dynamic quantization"
+
+        ov::pass::GraphRewrite rewr;
+        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulCWi>();
+        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQi>(std::ref(ctx));
+        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQ2i>(std::ref(ctx));
+        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQiP>(std::ref(ctx));
+        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulGQ2iP>(std::ref(ctx));
+        rewr.run_on_model(f._model);
+        ov::pass::Validate().run_on_model(f._model);
+    }
 
     do_permute(ctx);
     do_cvtf16(ctx);

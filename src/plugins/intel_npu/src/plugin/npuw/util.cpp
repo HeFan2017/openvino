@@ -402,6 +402,30 @@ inline void twrite_4b(ov::Tensor& t, uint8_t value, std::size_t r, std::size_t c
     }
 }
 
+inline float tread_f(const ov::Tensor& t, std::size_t r, std::size_t c, std::size_t COLS) {
+    const float* tdata = static_cast<float*>(t.data());
+    const float* telem = tdata + r * COLS + c;
+    return (*telem);
+}
+
+inline void twrite_f(ov::Tensor& t, float value, std::size_t r, std::size_t c, std::size_t COLS) {
+    float* tdata = static_cast<float*>(t.data());
+    float* telem = tdata + r * COLS + c;
+    *telem = value;
+}
+
+inline uint16_t tread_f16(const ov::Tensor& t, std::size_t r, std::size_t c, std::size_t COLS) {
+    const uint16_t* tdata = static_cast<uint16_t*>(t.data());
+    const uint16_t* telem = tdata + r * COLS + c;
+    return (*telem);
+}
+
+inline void twrite_f16(ov::Tensor& t, uint16_t value, std::size_t r, std::size_t c, std::size_t COLS) {
+    uint16_t* tdata = static_cast<uint16_t*>(t.data());
+    uint16_t* telem = tdata + r * COLS + c;
+    *telem = value;
+}
+
 ov::Tensor ov::npuw::util::transpose(const ov::Tensor& t) {
     ov::Shape shape = t.get_shape();
     NPUW_ASSERT(shape.size() == 3);  // Yes, so far only transpose 3D tensors
@@ -464,16 +488,28 @@ ov::Tensor ov::npuw::util::permute(const ov::Tensor& t, const std::vector<std::s
         }
         return tnew;
     } else if (axes[0] == 1 && axes[1] == 0 && axes[2] == 2) {
-        NPUW_ASSERT(t.get_element_type() == ov::element::i4);  // 4bit only here too
+        NPUW_ASSERT(t.get_element_type() == ov::element::i4 ||
+                    t.get_element_type() == ov::element::f16);
         ov::Shape tshape = {shape[1], shape[0], shape[2]};
         ov::Tensor tnew(t.get_element_type(), tshape);
 
         // Iterate over output tensor coordinates
-        for (std::size_t p = 0; p < tshape[0]; p++) {
-            for (std::size_t r = 0; r < tshape[1]; r++) {
-                for (std::size_t c = 0; c < tshape[2]; c++) {
-                    uint8_t value = tread_4b(t, r, p * shape[2] + c, shape[1] * shape[2]);
-                    twrite_4b(tnew, value, p * tshape[1] + r, c, tshape[2]);
+        if (t.get_element_type() == ov::element::i4) {
+            for (std::size_t p = 0; p < tshape[0]; p++) {
+                for (std::size_t r = 0; r < tshape[1]; r++) {
+                    for (std::size_t c = 0; c < tshape[2]; c++) {
+                        uint8_t value = tread_4b(t, r, p * shape[2] + c, shape[1] * shape[2]);
+                        twrite_4b(tnew, value, p * tshape[1] + r, c, tshape[2]);
+                    }
+                }
+            }
+        } else {
+            for (std::size_t p = 0; p < tshape[0]; p++) {
+                for (std::size_t r = 0; r < tshape[1]; r++) {
+                    for (std::size_t c = 0; c < tshape[2]; c++) {
+                        uint16_t value = tread_f16(t, r, p * shape[2] + c, shape[1] * shape[2]);
+                        twrite_f16(tnew, value, p * tshape[1] + r, c, tshape[2]);
+                    }
                 }
             }
         }
