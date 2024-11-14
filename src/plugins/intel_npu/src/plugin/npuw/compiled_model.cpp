@@ -85,6 +85,28 @@ ov::npuw::DeviceProperties get_properties_per_device(const std::shared_ptr<const
 }  // namespace npuw
 }  // namespace ov
 
+#include <windows.h>
+#include <psapi.h>
+
+void PrintMemoryInfo() {
+    HANDLE hProcess = GetCurrentProcess();
+    if (hProcess == NULL) {
+        std::cerr << "Could not open process." << std::endl;
+        return;
+    }
+
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (GetProcessMemoryInfo(hProcess, (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+        std::cout << "Memory Usage:" << std::endl;
+        std::cout << "  Working Set Size: " << pmc.WorkingSetSize / 1024 << " KB" << std::endl;
+        std::cout << "  Private Bytes: " << pmc.PrivateUsage / 1024 << " KB" << std::endl;
+    } else {
+        std::cerr << "Could not get process memory info." << std::endl;
+    }
+
+    CloseHandle(hProcess);
+}
+
 ov::npuw::CompiledModel::CompiledModel(const std::shared_ptr<ov::Model>& model,
                                        const std::shared_ptr<const ov::IPlugin>& plugin,
                                        const ov::AnyMap& properties)
@@ -433,7 +455,9 @@ ov::npuw::CompiledModel::CompiledModel(const std::shared_ptr<ov::Model>& model,
     }
 
     // Finalize memory in closures and weight banks
+    PrintMemoryInfo();
     finalize_weights_bank();
+    PrintMemoryInfo();
 
     // Print stats report when possible
     {
@@ -459,6 +483,8 @@ void ov::npuw::CompiledModel::finalize_weights_bank() {
             continue;
         }
 
+        printf("\n\n\n\nHFDebug: go through the %lld lazy_closures for submodel %lld\n", comp_model_desc.lazy_closure.size(), idx);
+
         const auto real_idx = comp_model_desc.replaced_by.value_or(idx);
         auto& func_desc = m_compiled_submodels[real_idx];
 
@@ -466,6 +492,9 @@ void ov::npuw::CompiledModel::finalize_weights_bank() {
             if (comp_model_desc.closure[tidx]) {
                 continue;  // host-side closure
             }
+            printf("HFDebug: Register a lazy_closure, %s, hash is 0x%llx.\n",
+                   comp_model_desc.lazy_closure[tidx].eval().get_shape().to_string().c_str(),
+                   comp_model_desc.lazy_closure[tidx].get_hash());
             m_weights_bank->registerLT(comp_model_desc.lazy_closure[tidx], *func_desc.device_it);
         }
     }

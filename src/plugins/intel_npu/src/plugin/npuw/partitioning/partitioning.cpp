@@ -1946,7 +1946,7 @@ void Partitioner::optimize(const std::string& func_name) {
     if (cfg.get<::intel_npu::NPUW_TRANS_WEIGHTS>())
     {
         ov::pass::GraphRewrite rewr;
-        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulTransWeights>(std::ref(ctx));
+        rewr.add_matcher<ov::npuw::patterns::opt::DQMatMulTransWeights>(std::ref(ctx), 0, 2, 1);
 
         rewr.run_on_model(f._model);
         ov::pass::Validate().run_on_model(f._model);

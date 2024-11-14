@@ -78,7 +78,7 @@ public:
 
 class DQMatMulTransWeights : public ov::pass::MatcherPass {
 public:
-    explicit DQMatMulTransWeights(Context::Ref ctx);
+    explicit DQMatMulTransWeights(Context::Ref ctx, int batch_index, int output_index, int input_index);
 };
 
 class DQMatMulGQiP : public ov::pass::MatcherPass {

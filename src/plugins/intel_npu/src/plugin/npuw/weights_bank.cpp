@@ -78,6 +78,7 @@ void Bank::evaluate_and_allocate() {
             auto iter_device = device_bank.find(lt);
             if (iter_device != device_bank.end() && iter_device->second) {
                 // Already allocated
+                printf("HFDebug: Already allocated lazy_tensor %s\n", lt.eval().get_shape().to_string().c_str());
                 return;
             }
 
@@ -90,6 +91,7 @@ void Bank::evaluate_and_allocate() {
 ov::Tensor Bank::unsafe_eval_and_alloc(const LazyTensor& tensor, const std::string& device_for_alloc) {
     // Note: private method used inside other methods with already locked mutex
     const auto& transformed_tensor = tensor.eval();
+    printf("HFDebug: in unsafe_eval_and_alloc\n");
     if (device_for_alloc == "CPU") {
         m_device_bank[device_for_alloc][tensor] = transformed_tensor;
         return transformed_tensor;
@@ -101,6 +103,7 @@ ov::Tensor Bank::unsafe_eval_and_alloc(const LazyTensor& tensor, const std::stri
         // FIXME: L0 allocation may crash when run in parallel
         std::lock_guard<std::mutex> guard(m_alloc_mutex);
         m_remote_ctx = m_core->get_default_context(device_for_alloc)._ptr;
+        printf("HFDebug: create a host tensor %s\n", transformed_tensor.get_shape().to_string().c_str());
         remote_tensor =
             m_remote_ctx->create_host_tensor(transformed_tensor.get_element_type(), transformed_tensor.get_shape());
         allocated_tensor = ov::make_tensor(remote_tensor);

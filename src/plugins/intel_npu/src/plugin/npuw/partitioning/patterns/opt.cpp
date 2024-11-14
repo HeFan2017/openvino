@@ -542,7 +542,7 @@ DQMatMulGQiP::DQMatMulGQiP(Context::Ref ctx) {
     register_matcher(std::make_shared<opp::Matcher>(qmm, "OptDQMatMulGQiP"), std::move(callback));
 }
 
-DQMatMulTransWeights::DQMatMulTransWeights(Context::Ref ctx)
+DQMatMulTransWeights::DQMatMulTransWeights(Context::Ref ctx, int batch_index, int output_index, int input_index)
 {
     auto qweight = opp::wrap_type<ov::op::v0::Parameter>();
     auto qcoeff = opp::wrap_type<ov::op::v0::Parameter>();
@@ -576,22 +576,38 @@ DQMatMulTransWeights::DQMatMulTransWeights(Context::Ref ctx)
             return (a == 1 && b > 1) || (a > 1 && b == 1);
         };
 
+        printf("HFDebug: qcoeff_shape[batch_index] = %lld, qweight_shape[batch_index] = %lld, qcoeff_shape[output_index] = %lld, qweight_shape[output_index] = %lld, \
+            qcoeff_shape[input_index] = %lld, act_shape[2] = %lld\n",
+            qcoeff_shape[batch_index],
+            qweight_shape[batch_index],
+            qcoeff_shape[output_index],
+            qweight_shape[output_index],
+            qcoeff_shape[input_index],
+            act_shape[2]);
+
         if (ov::element::i4 == matched_qweight->get_element_type() && qweight_shape.size() == 3 &&
-            ov::element::f16 == matched_qcoeff->get_element_type() && qcoeff_shape.size() == 3 &&
+            (ov::element::f16 == matched_qcoeff->get_element_type() || ov::element::f32 == matched_qcoeff->get_element_type()) && qcoeff_shape.size() == 3 &&
             act_shape.size() == 3 && 
-            qcoeff_shape[0] == qweight_shape[0] && qcoeff_shape[1] == qweight_shape[1] && qcoeff_shape[2] == 1 &&
-            !matched_matmul->get_transpose_a() && matched_matmul->get_transpose_b()) {
+            qcoeff_shape[batch_index] == qweight_shape[batch_index] && qcoeff_shape[output_index] == qweight_shape[output_index] && qcoeff_shape[input_index] == 1 && 
+            act_shape[2] == qweight_shape[batch_index] * qweight_shape[input_index]) {
             printf("HFDebug: doing transweight pattern\n");
             // Mark W closure to transpose, and transpose the respective parameter
-            ov::Shape tw_shape = {qweight_shape[1], qweight_shape[0], qweight_shape[2]};
+            ov::Shape tw_shape = {qweight_shape[batch_index], qweight_shape[output_index], qweight_shape[input_index]};
             matched_qweight->set_partial_shape(tw_shape);
             matched_qweight->validate_and_infer_types();
-            ctx.get().permute(matched_qweight, {1, 0, 2});
+            ctx.get().permute(matched_qweight, {(unsigned long long)batch_index, (unsigned long long)output_index, (unsigned long long)input_index});
+
+            if (ov::element::f32 == matched_qcoeff->get_element_type())
+            {
+                // Mark S closure to be lowered fo f16
+                matched_qcoeff->set_element_type(ov::element::f16);
+                ctx.get().to_f16(matched_qcoeff);
+            }
 
             // Also transpose S, but in a different way (see diagram above)
-            ctx.get().permute(matched_qcoeff, {1, 0, 2});
+            ctx.get().permute(matched_qcoeff, {(unsigned long long)batch_index, (unsigned long long)output_index, (unsigned long long)input_index});
 
-            ov::Shape ts_shape = {qcoeff_shape[1], qcoeff_shape[0], qcoeff_shape[2]};
+            ov::Shape ts_shape = {qcoeff_shape[batch_index], qcoeff_shape[output_index], qcoeff_shape[input_index]};
             matched_qcoeff->set_partial_shape(ts_shape);
             matched_qcoeff->validate_and_infer_types();
 
@@ -599,16 +615,35 @@ DQMatMulTransWeights::DQMatMulTransWeights(Context::Ref ctx)
 
             auto newmul = std::make_shared<ov::op::v1::Multiply>(newcvt, matched_qcoeff);
 
-            std::vector<std::size_t> trans_v = {1, 0, 2};
+            std::vector<std::size_t> trans_v = {1, 0, 2}; // before: B, O, I --> after: O, B, I
             auto trans_c = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{3}, trans_v);
             auto newtrans = std::make_shared<ov::op::v1::Transpose>(newmul, trans_c);
 
-            std::vector<std::size_t> rshp_v = {qweight_shape[0], qweight_shape[1] * qweight_shape[2]};
+            std::vector<std::size_t> rshp_v = {qweight_shape[output_index], qweight_shape[batch_index] * qweight_shape[input_index]};
 
             auto rshp_c = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{2}, rshp_v);
             auto newreshape = std::make_shared<ov::op::v1::Reshape>(newtrans, rshp_c, false);
 
-            matched_matmul->inputs()[1].replace_source_output(newreshape);
+            std::shared_ptr<ov::Node> mmi_node;
+            if (matched_out_mmi.get_node_shared_ptr()->get_element_type() == ov::element::f32) {
+                mmi_node = std::make_shared<ov::op::v0::Convert>(matched_out_mmi, ov::element::f16);
+            } else {
+                mmi_node = matched_out_mmi.get_node_shared_ptr();
+            }
+
+            auto newmatmul = std::make_shared<ov::op::v0::MatMul>(mmi_node, newreshape, false, true);
+
+            std::shared_ptr<ov::Node> matmulout;
+            if (matched_matmul->outputs()[0].get_element_type() == ov::element::f32) {
+                matmulout = std::make_shared<ov::op::v0::Convert>(newmatmul, ov::element::f32);
+            } else {
+                matmulout = newmatmul;
+            }
+
+            for (auto&& r : matched_matmul->output(0).get_target_inputs())
+            {
+                r.replace_source_output(matmulout);
+            }
 
             return true;  // root has changed
         }

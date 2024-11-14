@@ -474,15 +474,37 @@ ov::Tensor ov::npuw::util::permute(const ov::Tensor& t, const std::vector<std::s
     if (axes[0] == 2 && axes[1] == 0 && axes[2] == 1) {
         return transpose(t);
     } else if (axes[0] == 0 && axes[1] == 2 && axes[2] == 1) {
-        NPUW_ASSERT(t.get_element_type() == ov::element::i4);  // 4bit only here
+        NPUW_ASSERT(t.get_element_type() == ov::element::i4 ||
+                    t.get_element_type() == ov::element::f16 ||
+                    t.get_element_type() == ov::element::f32);
         ov::Shape tshape = {shape[0], shape[2], shape[1]};
         ov::Tensor tnew(t.get_element_type(), tshape);
 
-        for (std::size_t p = 0; p < shape[0]; p++) {
-            for (std::size_t r = 0; r < shape[1]; r++) {
-                for (std::size_t c = 0; c < shape[2]; c++) {
-                    uint8_t value = tread_4b(t, p * shape[1] + r, c, shape[2]);
-                    twrite_4b(tnew, value, p * shape[2] + c, r, shape[1]);
+        if (t.get_element_type() == ov::element::i4) {
+            for (std::size_t p = 0; p < shape[0]; p++) {
+                for (std::size_t r = 0; r < shape[1]; r++) {
+                    for (std::size_t c = 0; c < shape[2]; c++) {
+                        uint8_t value = tread_4b(t, p * shape[1] + r, c, shape[2]);
+                        twrite_4b(tnew, value, p * shape[2] + c, r, shape[1]);
+                    }
+                }
+            }
+        } else if (t.get_element_type() == ov::element::f16) {
+            for (std::size_t p = 0; p < shape[0]; p++) {
+                for (std::size_t r = 0; r < shape[1]; r++) {
+                    for (std::size_t c = 0; c < shape[2]; c++) {
+                        uint16_t value = tread_f16(t, p * shape[1] + r, c, shape[2]);
+                        twrite_f16(tnew, value, p * shape[2] + c, r, shape[1]);
+                    }
+                }
+            }
+        } else {
+            for (std::size_t p = 0; p < shape[0]; p++) {
+                for (std::size_t r = 0; r < shape[1]; r++) {
+                    for (std::size_t c = 0; c < shape[2]; c++) {
+                        float value = tread_f(t, p * shape[1] + r, c, shape[2]);
+                        twrite_f(tnew, value, p * shape[2] + c, r, shape[1]);
+                    }
                 }
             }
         }
